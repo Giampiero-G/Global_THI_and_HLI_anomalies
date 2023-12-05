@@ -1,0 +1,73 @@
+import netCDF4 as nc
+import numpy as np
+import matplotlib.pyplot as plt
+import cartopy.crs as ccrs
+import matplotlib.colors as mcolors
+import os
+
+# Global font settings for consistency across plots
+plt.rcParams['font.family'] = 'sans-serif'
+plt.rcParams['font.sans-serif'] = 'Arial'
+plt.rcParams['font.size'] = 12
+
+def read_THI_and_coords(file_path):
+    """Read THI and geographic coordinates from a NetCDF file."""
+    with nc.Dataset(file_path, 'r') as data:
+        THI = data['THI'][:]
+        lats = data['lat'][:]
+        lons = data['lon'][:]
+        return THI, lats, lons
+
+def calculate_THI_anomalies(current_data, baseline_data):
+    """Calculate THI anomalies by comparing current data with baseline."""
+    return current_data - baseline_data
+
+def plot_THI_on_map(THI_data, lats, lons, ax, vmin, vmax, cmap):
+    """Plot THI data on a map with pre-defined color scale limits."""
+    ax.coastlines()
+    gl = ax.gridlines(draw_labels=True, linewidth=1, color='gray', alpha=0.5, linestyle='-')
+    gl.top_labels = False
+    gl.right_labels = False
+    gl.xlabel_style = {'size': 16, 'color': 'black'}
+    gl.ylabel_style = {'size': 16, 'color': 'black'}
+
+    THI_data = np.ma.masked_invalid(THI_data)
+    norm = mcolors.TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax)
+    cs = ax.contourf(lons, lats, THI_data, transform=ccrs.PlateCarree(), cmap=cmap, norm=norm)
+    return cs
+
+# Read baseline data
+baseline_path = "path/to/baseline_data.nc"
+baseline_data, baseline_lats, baseline_lons = read_THI_and_coords(baseline_path)
+
+comparison_files = [
+    "path/to/comparison_file1.nc",
+    "path/to/comparison_file2.nc",
+    "path/to/comparison_file3.nc"
+]
+
+fig, axs = plt.subplots(1, 3, figsize=(18, 6), subplot_kw={'projection': ccrs.PlateCarree()})
+cmap = plt.get_cmap('RdBu_r') 
+
+# Manually set color scale limits after reviewing dataset
+vmin = -5
+vmax = 11
+
+for ax, file in zip(axs, comparison_files):
+    current_data, lats, lons = read_THI_and_coords(file)
+    anomalies = calculate_THI_anomalies(current_data, baseline_data)
+    
+    # Extract period from filename for titles
+    period = os.path.splitext(os.path.basename(file))[0].split('_')[3:5]
+    ax.set_title(f"CliNO vs {'-'.join(period)}", fontsize=14)
+    
+    # Clip anomalies to color scale limits
+    anomalies = np.clip(anomalies, vmin, vmax)
+    plot_THI_on_map(anomalies, lats, lons, ax, vmin, vmax, cmap)
+
+# Adjust layout and show plot
+plt.tight_layout()
+plt.show()
+
+# Save the figure with adjusted layout
+fig.savefig('Combined_THI_Anomalies_Adjusted.png', dpi=600, bbox_inches='tight')
