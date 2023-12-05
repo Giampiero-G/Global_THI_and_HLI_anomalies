@@ -1,0 +1,65 @@
+import netCDF4 as nc
+import numpy as np
+import os
+import pandas as pd
+
+# Function to check data within a single netCDF file
+def check_data_in_file(file_path, variable_name):
+    # Opening the netCDF file
+    with nc.Dataset(file_path, 'r') as dataset:
+        # Extracting data for the specified variable
+        data = dataset.variables[variable_name][:]
+        total_count = np.prod(data.shape)
+
+        # Dictionary to store the results of checks
+        checks = {}
+
+        # Check for placeholder fill values
+        checks["Fill Value (1e+20) %"] = np.sum(data == 1e+20) / total_count * 100
+
+        # Additional checks for specific variables
+        if variable_name == 'tas':
+            # Check for values below absolute zero in temperature data
+            checks["Below Absolute Zero %"] = np.sum(data < -273.15) / total_count * 100
+        if variable_name == 'hurs':
+            # Check for humidity values above 100% and negative values
+            checks["Above 100%"] = np.sum(data > 100) / total_count * 100
+            checks["Negative Values %"] = np.sum(data < 0) / total_count * 100
+        if variable_name in ['rsds', 'sfcWind']:
+            # Check for negative values in solar radiation and wind speed data
+            checks["Negative Values %"] = np.sum(data < 0) / total_count * 100
+
+        return checks
+
+# Function to aggregate results from multiple files
+def aggregate_results(results):
+    df = pd.DataFrame(results)
+
+    # Select only numeric columns for calculating the mean
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    # Group by variable and calculate the mean
+    summary = df.groupby('Variable')[numeric_cols].mean()
+    
+    return summary
+
+# Define the base directory (user should replace this with their own path)
+base_directory = 'path/to/your/data'
+# List of variables to check
+variables = ['hurs', 'rsds', 'sfcWind', 'tas']
+
+results = []
+# Loop through each variable and process all corresponding files
+for variable in variables:
+    directory_path = os.path.join(base_directory, variable)
+    for filename in os.listdir(directory_path):
+        if filename.endswith(".nc"):
+            file_path = os.path.join(directory_path, filename)
+            # Perform checks on the file
+            checks = check_data_in_file(file_path, variable)
+            # Append results to the list
+            results.append({"File": filename, "Variable": variable, **checks})
+
+# Aggregate and calculate the mean of the results
+summary = aggregate_results(results)
+# Print the summary
+print(summary)
