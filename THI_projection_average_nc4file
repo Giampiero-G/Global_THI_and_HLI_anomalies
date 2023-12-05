@@ -1,0 +1,120 @@
+import netCDF4 as nc
+import numpy as np
+import matplotlib.pyplot as plt
+import cartopy.crs as ccrs
+import os
+
+# Function to calculate the average of a variable from netCDF files in a directory
+def calculate_average_in_directory(directory_path, variable_name):
+    total = None
+    count = 0
+    for filename in os.listdir(directory_path):
+        if filename.endswith(".nc"):
+            with nc.Dataset(os.path.join(directory_path, filename), 'r') as data:
+                current_data = data[variable_name][:]
+
+                # Replace 1e+20 placeholder values with NaN
+                current_data[current_data == 1e+20] = np.nan
+                
+                # Corrections for air temperature (tas)
+                if variable_name == 'tas':
+                    # Set values below absolute zero to absolute zero
+                    current_data[current_data < 273.15] = 273.15
+
+                # Corrections for relative humidity (hurs)
+                if variable_name == 'hurs':
+                    # Set negative humidity values to zero
+                    current_data[current_data < 0] = 0
+                    # Cap humidity values at 100%
+                    current_data[current_data > 100] = 100
+
+                # Initialize total with zeros if it's the first file
+                if total is None:
+                    total = np.zeros_like(current_data[0])
+
+                # Accumulate the mean of the current data
+                total += np.mean(current_data, axis=0)
+                count += 1
+
+    # Return the average if count is non-zero, otherwise return None
+    return total / count if count != 0 else None
+
+# Function to calculate the Temperature-Humidity Index (THI)
+def calculate_THI(temp_kelvin, humidity):
+    # Convert temperature from Kelvin to Celsius
+    temp_celsius = temp_kelvin - 273.15
+    # THI formula
+    THI = (1.8 * temp_celsius + 32) - (0.55 - 0.55 * (humidity / 100)) * ((1.8 * temp_celsius + 32) - 58)
+    return THI
+
+# Function to extract latitudes and longitudes from a netCDF dataset
+def get_lat_lon_from_dataset(directory_path, variable_name):
+    for filename in os.listdir(directory_path):
+        if filename.endswith(".nc"):
+            with nc.Dataset(os.path.join(directory_path, filename), 'r') as data:
+                lats = data["lat"][:]
+                lons = data["lon"][:]
+                return lats, lons
+    return None, None
+
+# Function to plot THI on a map
+def plot_THI_on_map(THI_data, lats, lons, title="Temperature-Humidity Index (THI)"):
+    fig = plt.figure(figsize=(18, 9))
+    ax = plt.axes(projection=ccrs.PlateCarree())
+    ax.coastlines()
+    gl = ax.gridlines(crs=ccrs.PlateCarree(), draw_labels=True,
+                      linewidth=1, color='gray', alpha=0.5, linestyle='-')
+    gl.top_labels = False
+    gl.right_labels = False
+    gl.xlabel_style = {'size': 16, 'color': 'black'}
+    gl.ylabel_style = {'size': 16, 'color': 'black'}
+
+    # Set negative values to NaN for visualization
+    THI_data[THI_data < 0] = np.nan
+    # Handle NaNs for visualization
+    THI_data = np.ma.masked_invalid(THI_data)
+    # Calculate min and max values for contour levels
+    min_value = int(np.nanmin(THI_data))
+    max_value = int(np.nanmax(THI_data))
+    levels = np.arange(min_value, max_value + 1, 3)
+    cs = ax.contourf(lons, lats, THI_data, levels=levels, transform=ccrs.PlateCarree(), cmap=plt.cm.RdBu_r)
+    cbar = plt.colorbar(cs, orientation='horizontal', ticks=levels, pad=0.1)
+    cbar.set_label('Temperature-Humidity Index (THI)', fontsize=22, labelpad=20)
+    cbar.ax.tick_params(labelsize=15)
+    plt.title(title, fontsize=22)
+    plt.tight_layout(pad=2.0)
+    plt.subplots_adjust(top=0.95, bottom=0.1)
+    plt.show()
+    fig.savefig('THI_map.png', dpi=300)
+
+# Function to calculate the average THI in directories
+def calculate_average_THI_in_directory(temp_directory, humidity_directory):
+    tas_average = calculate_average_in_directory(temp_directory, "tas")
+    hurs_average = calculate_average_in_directory(humidity_directory, "hurs")
+    return calculate_THI(tas_average, hurs_average)
+
+def main():
+    base_directory = "path/to/your/file"
+    temp_directory = os.path.join(base_directory, "tas")
+    humidity_directory = os.path.join(base_directory, "hurs")
+
+    # Calculate the average THI
+    average_THI_data = calculate_average_THI_in_directory(temp_directory, humidity_directory)
+    lats, lons = get_lat_lon_from_dataset(temp_directory, "tas")
+    if lats is not None and lons is not None:
+        plot_THI_on_map(average_THI_data, lats, lons)
+        with nc.Dataset('average_THI_data_projection.nc', 'w', format='NETCDF4_CLASSIC') as new_dataset:
+            new_dataset.createDimension('lat', len(lats))
+            new_dataset.createDimension('lon', len(lons))
+            latitudes = new_dataset.createVariable('lat', np.float32, ('lat',))
+            longitudes = new_dataset.createVariable('lon', np.float32, ('lon',))
+            THI = new_dataset.createVariable('THI', np.float32, ('lat', 'lon',))
+            latitudes[:] = lats
+            longitudes[:] = lons
+            THI[:, :] = average_THI_data
+            print("THI data saved in 'average_THI_data_projection.nc'.")
+    else:
+        print("Error retrieving latitudes and longitudes.")
+
+if __name__ == "__main__":
+    main()
