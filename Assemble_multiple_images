@@ -1,0 +1,50 @@
+import matplotlib.pyplot as plt
+from PIL import Image
+import numpy as np
+
+def assemble_images_vertically_with_spacing(image_paths, output_path, spacing=10):
+    """
+    Assemble multiple images vertically into a single image with specified spacing.
+
+    :param image_paths: List of file paths for the images to be assembled.
+    :param output_path: Path to save the assembled output image.
+    :param spacing: Vertical space between images in pixels.
+    """
+    # Load images from the provided paths
+    images = [Image.open(img_path) for img_path in image_paths]
+    
+    # Calculate the maximum width and total height including the additional spacing
+    max_width = max(im.size[0] for im in images)
+    total_height = sum(im.size[1] for im in images) + (spacing * (len(images) - 1))
+    
+    # Create a new image with combined dimensions and a white background
+    new_im = Image.new('RGB', (max_width, total_height), color='white')
+    
+    y_offset = 0
+    for im in images:
+        # Paste each image into the final image and update the offset
+        new_im.paste(im, (0, y_offset))
+        y_offset += im.size[1] + spacing
+    
+    # Save the assembled image to the specified path
+    try:
+        new_im.save(output_path, dpi=(600, 600))  # Set high DPI for better resolution
+        print(f"Image successfully saved at: {output_path}")
+    except IOError as e:
+        print(f"Failed to save the image. Error: {e}")
+
+# Replace these paths with the actual image file paths on your system
+image_paths = [
+    'path/to/your/first/image.png',
+    'path/to/your/second/image.png',
+    'path/to/your/third/image.png'
+]
+
+# Output file path
+output_path = 'path/to/your/output/image.png'
+
+# Vertical spacing between images in pixels
+spacing = 50
+
+# Call the function to assemble images
+assemble_images_vertically_with_spacing(image_paths, output_path, spacing)
