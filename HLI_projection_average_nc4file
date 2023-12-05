@@ -1,0 +1,152 @@
+import netCDF4 as nc
+import numpy as np
+import matplotlib.pyplot as plt
+import cartopy.crs as ccrs
+import os
+
+# Function to calculate the average of a variable from netCDF files in a directory
+def calculate_average_in_directory(directory_path, variable_name):
+    total = None
+    count = 0
+    for filename in os.listdir(directory_path):
+        if filename.endswith(".nc"):
+            with nc.Dataset(os.path.join(directory_path, filename), 'r') as data:
+                current_data = data[variable_name][:]
+
+                # Handling 1e+20 placeholder values
+                current_data[current_data == 1e+20] = np.nan
+                
+                # Corrections for air temperature (tas)
+                if variable_name == 'tas':
+                    current_data[current_data < 273.15] = 273.15  # Set values below absolute zero at absolute zero
+                # Corrections for solar radiation (rsds)
+                if variable_name == 'rsds':
+                    current_data[current_data < 0] = 0
+                # Corrections for relative humidity (hurs)
+                if variable_name == 'hurs':
+                    current_data[current_data < 0] = 0  # Set negative humidity values to zero
+                    current_data[current_data > 100] = 100  # Set humidity values above 100% to 100%
+                if variable_name == 'sfcWind':
+                    current_data[current_data < 0] = 0  # Corrections for wind speed (sfcWind)                                     
+                
+                if total is None:
+                    total = np.zeros_like(current_data[0])
+                # Accumulate the average of the data
+                total += np.mean(current_data, axis=0)
+                count += 1
+    # Return the average if count is non-zero, otherwise return None
+    return total / count if count != 0 else None
+
+# Function to calculate Black Globe Temperature (T_bg)
+def calculate_T_bg(tas, rsds):
+    # Add a small epsilon value to avoid log(0)
+    epsilon = 1e-8
+    # Convert temperature from Kelvin to Celsius
+    tas_celsius = tas - 273.15
+    # Ensure square root is only calculated on positive values
+    tas_celsius_sqrt = np.sqrt(np.maximum(tas_celsius, 0))
+    # Calculate T_bg, adding epsilon to avoid logarithm of zero
+    T_bg = 1.33 * tas_celsius - 2.65 * tas_celsius_sqrt + 3.21 * np.log(np.maximum(rsds, epsilon) + 1) + 3.5
+    return T_bg
+
+# Function to calculate Heat Load Index (HLI)
+def calculate_HLI(hurs, T_bg, sfcWind):
+    # Calculate sigmoid function for Black Globe Temperature
+    S_BGT = 1 / (1 + np.exp(-((T_bg - 25) / 2.25)))
+    # Define HLI equation for T_bg above 25°C
+    HLI_above_25 = 8.62 + (0.38 * hurs) + (1.55 * T_bg) - (0.5 * sfcWind) + np.exp(2.4 - sfcWind)
+    # Define HLI equation for T_bg below 25°C
+    HLI_below_25 = 10.66 + (0.28 * hurs) + (1.3 * T_bg) - sfcWind
+    # Calculate final HLI
+    return S_BGT * HLI_above_25 + (1 - S_BGT) * HLI_below_25
+
+# Function to plot HLI on a map
+def plot_HLI_on_map(HLI_data, lats, lons, title="Heat Load Index (HLI)"):
+    fig = plt.figure(figsize=(18, 9))
+    ax = plt.axes(projection=ccrs.PlateCarree())
+    ax.coastlines()
+    # Add gridlines with labels
+    gl = ax.gridlines(crs=ccrs.PlateCarree(), draw_labels=True,
+                      linewidth=1, color='gray', alpha=0.5, linestyle='-')
+    gl.top_labels = False
+    gl.right_labels = False
+    gl.xlabel_style = {'size': 16, 'color': 'black'}
+    gl.ylabel_style = {'size': 16, 'color': 'black'}
+   
+    # Set negative values to NaN for visualization
+    HLI_data[HLI_data < 0] = np.nan
+    
+    # Handle NaNs for visualization
+    HLI_data = np.ma.masked_invalid(HLI_data) 
+    
+    # Calculates minimum and maximum values of HLI data to establish contour levels
+    min_value = int(np.nanmin(HLI_data))
+    max_value = int(np.nanmax(HLI_data))
+    levels = np.arange(min_value, max_value + 1, 3)  # Generate min_value to max_value levels with step 3
+    
+    cs = ax.contourf(lons, lats, HLI_data, levels=levels, transform=ccrs.PlateCarree(), cmap=plt.cm.RdBu_r)
+    
+    #Configure the colourbar to use integer layers
+    cbar = plt.colorbar(cs, orientation='horizontal', ticks=levels, pad=0.1)
+    cbar.set_label('Heat Load Index (HLI)', fontsize=22, labelpad=20)
+    cbar.ax.tick_params(labelsize=15)
+    
+    plt.title(title, fontsize=22)
+    plt.tight_layout(pad=2.0)
+    plt.subplots_adjust(top=0.95, bottom=0.1)
+    
+    plt.show()
+    fig.savefig('HLI_map_CliNO.png', dpi=300)  # Save high resolution figure
+
+# Function to calculate the average HLI in directories
+def calculate_average_HLI_in_directory(temp_directory, humidity_directory, wind_directory, radiation_directory):
+    tas_average = calculate_average_in_directory(temp_directory, "tas")
+    hurs_average = calculate_average_in_directory(humidity_directory, "hurs")
+    sfcWind_average = calculate_average_in_directory(wind_directory, "sfcWind")
+    rsds_average = calculate_average_in_directory(radiation_directory, "rsds")
+    
+    T_bg = calculate_T_bg(tas_average, rsds_average)
+    return calculate_HLI(hurs_average, T_bg, sfcWind_average)
+
+# Function to extract latitudes and longitudes from a netCDF dataset
+def get_lat_lon_from_dataset(directory_path, variable_name):
+    for filename in os.listdir(directory_path):
+        if filename.endswith(".nc"):
+            with nc.Dataset(os.path.join(directory_path, filename), 'r') as data:
+                lats = data.variables["lat"][:]
+                lons = data.variables["lon"][:]
+                return lats, lons
+    return None, None
+
+def main():
+    # Update the base_directory path as per your file location
+    base_directory = "path/to/your/file"
+    temp_directory = os.path.join(base_directory, "tas")
+    humidity_directory = os.path.join(base_directory, "hurs")
+    wind_directory = os.path.join(base_directory, "sfcWind")
+    radiation_directory = os.path.join(base_directory, "rsds")
+
+    # Calculate the average HLI
+    average_HLI_data = calculate_average_HLI_in_directory(temp_directory, humidity_directory, wind_directory, radiation_directory)
+    
+    # Retrieve latitudes and longitudes for plotting
+    lats, lons = get_lat_lon_from_dataset(temp_directory, "tas")
+    if lats is not None and lons is not None:
+        plot_HLI_on_map(average_HLI_data, lats, lons, title=None)
+        
+        # Save the average HLI data
+        with nc.Dataset('average_HLI_data_projection.nc', 'w', format='NETCDF4_CLASSIC') as new_dataset:
+            new_dataset.createDimension('lat', len(lats))
+            new_dataset.createDimension('lon', len(lons))
+            latitudes = new_dataset.createVariable('lat', np.float32, ('lat',))
+            longitudes = new_dataset.createVariable('lon', np.float32, ('lon',))
+            HLI = new_dataset.createVariable('HLI', np.float32, ('lat', 'lon',))
+            latitudes[:] = lats
+            longitudes[:] = lons
+            HLI[:, :] = average_HLI_data
+            print("Average HLI data saved in 'average_HLI_data_projection.nc'.")
+    else:
+        print("Error in retrieving latitudes and longitudes.")
+
+if __name__ == "__main__":
+    main()
