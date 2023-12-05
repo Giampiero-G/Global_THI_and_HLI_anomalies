@@ -1,0 +1,75 @@
+import netCDF4 as nc
+import numpy as np
+import matplotlib.pyplot as plt
+import cartopy.crs as ccrs
+import matplotlib.colors as mcolors
+import os
+
+# Global font settings for consistency
+plt.rcParams['font.family'] = 'sans-serif'
+plt.rcParams['font.sans-serif'] = 'Arial'
+plt.rcParams['font.size'] = 12
+
+def read_HLI_and_coords(file_path):
+    """Read HLI and geographic coordinates from a NetCDF file."""
+    with nc.Dataset(file_path, 'r') as data:
+        HLI = data['HLI'][:]
+        lats = data['lat'][:]
+        lons = data['lon'][:]
+        return HLI, lats, lons
+
+def calculate_HLI_anomalies(current_data, baseline_data):
+    """Calculate HLI anomalies by subtracting baseline from current data."""
+    return current_data - baseline_data
+
+def plot_HLI_on_map(HLI_data, lats, lons, ax, vmin, vmax, cmap):
+    """Plot HLI data on a map with specified color scale limits."""
+    ax.coastlines()
+    gl = ax.gridlines(draw_labels=True, linewidth=1, color='gray', alpha=0.5, linestyle='-')
+    gl.top_labels = False
+    gl.right_labels = False
+    gl.xlabel_style = {'size': 16, 'color': 'black'}
+    gl.ylabel_style = {'size': 16, 'color': 'black'}
+
+    HLI_data = np.ma.masked_invalid(HLI_data)
+    levels = np.arange(vmin, vmax + 1, 1)
+    norm = mcolors.TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax)
+    cs = ax.contourf(lons, lats, HLI_data, levels=levels, transform=ccrs.PlateCarree(), cmap=cmap, norm=norm)
+    return cs
+
+# Read baseline HLI data
+baseline_path = "path/to/baseline_data.nc"
+baseline_data, baseline_lats, baseline_lons = read_HLI_and_coords(baseline_path)
+
+# Define paths to comparison files
+comparison_files = [
+    "path/to/comparison_file1.nc",
+    "path/to/comparison_file2.nc",
+    "path/to/comparison_file3.nc"
+]
+
+fig, axs = plt.subplots(1, 3, figsize=(18, 6), subplot_kw={'projection': ccrs.PlateCarree()})
+cmap = plt.get_cmap('RdBu_r')
+
+# Manual color scale limits based on observed data
+vmin = -9
+vmax = 17
+
+for ax, file in zip(axs, comparison_files):
+    current_data, lats, lons = read_HLI_and_coords(file)
+    anomalies = calculate_HLI_anomalies(current_data, baseline_data)
+    
+    filename_without_extension = os.path.splitext(os.path.basename(file))[0]
+    period = filename_without_extension.split('_')[3:5]
+    title = f"CliNO vs {'-'.join(period)}"
+    title_x = (ax.get_xlim()[1] - ax.get_xlim()[0]) / 2
+    title_y = 1.0 + 100  # Title position adjustment
+    ax.text(title_x, title_y, title, fontsize=14, ha='center', va='center', weight='bold')
+
+    anomalies = np.clip(anomalies, vmin, vmax)
+    last_cs = plot_HLI_on_map(anomalies, lats, lons, ax, vmin, vmax, cmap)
+
+plt.tight_layout()
+plt.show()
+
+fig.savefig('Combined_HLI_Anomalies_Adjusted.png', dpi=300, bbox_inches='tight')
